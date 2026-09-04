@@ -1,6 +1,0 @@
-   [build]
-   builder = "heroku.buildpacks"
-   buildpacks = ["heroku/python"]
-
-   [env]
-   PYTHONUNBUFFERED = "1"
