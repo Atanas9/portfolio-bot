@@ -1,18 +1,17 @@
 import os
+import sys
+os.environ['DISCORD_PY_DISABLE_VOICE'] = '1'
+
 import discord
 from discord.ext import commands, tasks
 from datetime import datetime
 import pytz
 import yfinance as yf
-from io import StringIO
-import csv
 
-# Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# Store portfolio data
 portfolio_data = {}
 target_weights = {
     'VOO': 0.50,
@@ -37,37 +36,29 @@ async def on_ready():
     try:
         daily_briefing.start()
     except:
-        print("Daily briefing already running")
+        pass
 
 def parse_csv_data(csv_text):
-    """Parse CSV data from Trading 212"""
-    try:
-        lines = csv_text.strip().split('\n')
-        data = {}
-        
-        # Skip header if present
-        start_idx = 0
-        if lines and ('Ticker' in lines[0] or 'ticker' in lines[0].lower()):
-            start_idx = 1
-        
-        for line in lines[start_idx:]:
-            parts = [p.strip() for p in line.split(',')]
-            if len(parts) >= 2:
-                ticker = parts[0].strip()
-                try:
-                    shares = float(parts[1])
-                    if ticker and shares > 0:
-                        data[ticker] = shares
-                except:
-                    pass
-        
-        return data
-    except Exception as e:
-        print(f"Error parsing CSV: {e}")
-        return {}
+    lines = csv_text.strip().split('\n')
+    data = {}
+    start_idx = 0
+    if lines and ('Ticker' in lines[0] or 'ticker' in lines[0].lower()):
+        start_idx = 1
+    
+    for line in lines[start_idx:]:
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) >= 2:
+            ticker = parts[0].strip()
+            try:
+                shares = float(parts[1])
+                if ticker and shares > 0:
+                    data[ticker] = shares
+            except:
+                pass
+    
+    return data
 
 def get_price(ticker):
-    """Fetch current price from Yahoo Finance"""
     try:
         tick = yf.Ticker(ticker)
         hist = tick.history(period='1d')
@@ -75,12 +66,10 @@ def get_price(ticker):
             price = hist['Close'].iloc[-1]
             return float(price)
         return None
-    except Exception as e:
-        print(f"Error fetching price for {ticker}: {e}")
+    except:
         return None
 
 def calculate_portfolio_value():
-    """Calculate current portfolio value and weights"""
     if not portfolio_data:
         return {}, {}, 0
     
@@ -105,7 +94,6 @@ def calculate_portfolio_value():
     return portfolio_values, current_weights, total_value
 
 def get_rebalancing_needs(portfolio_values, current_weights, total_value):
-    """Calculate rebalancing needs"""
     rebalancing = {}
     
     for ticker, target_weight in target_weights.items():
@@ -126,7 +114,6 @@ def get_rebalancing_needs(portfolio_values, current_weights, total_value):
 
 @bot.command(name='portfolio')
 async def portfolio_command(ctx):
-    """Show current portfolio holdings"""
     portfolio_values, current_weights, total_value = calculate_portfolio_value()
     
     if not portfolio_values:
@@ -152,7 +139,6 @@ async def portfolio_command(ctx):
 
 @bot.command(name='rebalance')
 async def rebalance_command(ctx):
-    """Show rebalancing recommendations"""
     portfolio_values, current_weights, total_value = calculate_portfolio_value()
     
     if not portfolio_values:
@@ -181,7 +167,6 @@ async def rebalance_command(ctx):
 
 @bot.command(name='add-cash')
 async def add_cash_command(ctx, amount: float):
-    """Suggest allocation for new money"""
     portfolio_values, current_weights, total_value = calculate_portfolio_value()
     
     if not portfolio_values:
@@ -209,8 +194,7 @@ async def add_cash_command(ctx, amount: float):
 
 @bot.command(name='load-csv')
 async def load_csv_command(ctx):
-    """Load portfolio data from CSV"""
-    await ctx.send("📥 Please paste your Trading 212 CSV data in the next message.\n\nFormat should be:\n```\nTicker,Shares\nVOO,50\nEUNL.DE,20\n```")
+    await ctx.send("📥 Please paste your Trading 212 CSV data in the next message.\n\nFormat:\n```\nTicker,Shares\nVOO,50\nEUNL.DE,20\n```")
     
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
@@ -220,15 +204,14 @@ async def load_csv_command(ctx):
         global portfolio_data
         portfolio_data = parse_csv_data(msg.content)
         if portfolio_data:
-            await ctx.send(f"✅ Loaded {len(portfolio_data)} holdings!\n\nUse `/portfolio` to see your holdings or `/rebalance` to see rebalancing needs.")
+            await ctx.send(f"✅ Loaded {len(portfolio_data)} holdings!")
         else:
-            await ctx.send("❌ Could not parse CSV. Make sure format is:\n```\nTicker,Shares\nVOO,50\n```")
+            await ctx.send("❌ Could not parse CSV.")
     except:
-        await ctx.send("❌ Timeout. Please try `/load-csv` again.")
+        await ctx.send("❌ Timeout.")
 
 @tasks.loop(minutes=1)
 async def daily_briefing():
-    """Send daily briefing at 8 AM Italian time"""
     try:
         now = datetime.now(italy_tz)
         
@@ -240,7 +223,7 @@ async def daily_briefing():
                         channel = ch
                         break
             
-            if channel:
+            if channel and portfolio_data:
                 portfolio_values, current_weights, total_value = calculate_portfolio_value()
                 
                 if portfolio_values:
@@ -263,7 +246,7 @@ async def daily_briefing():
                         rebalance_count = sum(1 for r in rebalancing.values() if r['action'] != 'HOLD')
                         embed.add_field(
                             name="⚠️ Rebalancing Needed",
-                            value=f"{rebalance_count} positions need adjustment. Use `/rebalance` for details.",
+                            value=f"{rebalance_count} positions need adjustment.",
                             inline=False
                         )
                     else:
@@ -275,15 +258,14 @@ async def daily_briefing():
                     
                     await channel.send(embed=embed)
     except Exception as e:
-        print(f"Error in daily briefing: {e}")
+        print(f"Error in briefing: {e}")
 
 @daily_briefing.before_loop
 async def before_daily_briefing():
     await bot.wait_until_ready()
 
-# Start the bot
 token = os.getenv('DISCORD_TOKEN')
 if token:
     bot.run(token)
 else:
-    print("ERROR: DISCORD_TOKEN environment variable not set!")
+    print("ERROR: DISCORD_TOKEN not set!")
